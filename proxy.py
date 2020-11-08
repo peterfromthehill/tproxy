@@ -23,92 +23,40 @@ USA
 
 """
 
+import os
+from pprint import pformat
+from twisted.python.log import err
 from twisted.web import http
-from twisted.internet import reactor, protocol
+from twisted.internet import reactor, protocol, ssl
 from twisted.python import log
+from twisted.internet.endpoints import TCP4ClientEndpoint
+from twisted.internet.defer import Deferred
+from twisted.internet.protocol import Protocol
+from twisted.web.client import ProxyAgent, readBody
+from twisted.web.http_headers import Headers
+from twisted.internet.defer import succeed
+from twisted.web.iweb import IBodyProducer
+from zope.interface import implementer
 import re
 import sys
 
 log.startLogging(sys.stdout)
 
-class ProxyClient(http.HTTPClient):
-    """ The proxy client connects to the real server, fetches the resource and
-    sends it back to the original client, possibly in a slightly different
-    form.
-    """
+@implementer(IBodyProducer)
+class BytesProducer(object):
+    def __init__(self, body):
+        self.body = body
+        self.length = len(body)
 
-    def __init__(self, method, uri, postData, headers, originalRequest):
-        self.method = method
-        self.uri = uri
-        self.postData = postData
-        self.headers = headers
-        self.originalRequest = originalRequest
-        self.contentLength = None
+    def startProducing(self, consumer):
+        consumer.write(self.body)
+        return succeed(None)
 
-    def sendRequest(self):
-        log.msg("Sending request: %s %s" % (self.method, self.uri))
-        self.sendCommand(self.method, self.uri)
+    def pauseProducing(self):
+        pass
 
-    def sendHeaders(self):
-        for key, values in self.headers:
-            if key.lower() == 'connection':
-                values = ['close']
-            elif key.lower() == 'keep-alive':
-                next
-
-            for value in values:
-                self.sendHeader(key, value)
-        self.endHeaders()
-
-    def sendPostData(self):
-        log.msg("Sending POST data")
-        self.transport.write(self.postData)
-
-    def connectionMade(self):
-        log.msg("HTTP connection made")
-        self.sendRequest()
-        self.sendHeaders()
-        if self.method == 'POST':
-            self.sendPostData()
-
-    def handleStatus(self, version, code, message):
-        log.msg("Got server response: %s %s %s" % (version, code, message))
-        self.originalRequest.setResponseCode(int(code), message)
-
-    def handleHeader(self, key, value):
-        if key.lower() == 'content-length':
-            self.contentLength = value
-        else:
-            self.originalRequest.responseHeaders.addRawHeader(key, value)
-
-    def handleResponse(self, data):
-        data = self.originalRequest.processResponse(data)
-
-        if self.contentLength != None:
-            self.originalRequest.setHeader('Content-Length', len(data))
-
-        self.originalRequest.write(data)
-
-        self.originalRequest.finish()
-        self.transport.loseConnection()
-
-class ProxyClientFactory(protocol.ClientFactory):
-    def __init__(self, method, uri, postData, headers, originalRequest):
-        self.protocol = ProxyClient
-        self.method = method
-        self.uri = uri
-        self.postData = postData
-        self.headers = headers
-        self.originalRequest = originalRequest
-
-    def buildProtocol(self, addr):
-        return self.protocol(self.method, self.uri, self.postData,
-                             self.headers, self.originalRequest)
-
-    def clientConnectionFailed(self, connector, reason):
-        log.err("Server connection failed: %s" % reason)
-        self.originalRequest.setResponseCode(504)
-        self.originalRequest.finish()
+    def stopProducing(self):
+        pass        
 
 class ProxyRequest(http.Request):
     def __init__(self, channel, queued, reactor=reactor):
@@ -116,7 +64,7 @@ class ProxyRequest(http.Request):
         self.reactor = reactor
 
     def process(self):
-        host = self.getHeader('host')
+        host = self.getHeader('Host')
         if not host:
             log.err("No host header given")
             self.setResponseCode(400)
@@ -124,21 +72,63 @@ class ProxyRequest(http.Request):
             return
 
         port = 80
+        if self.isSecure() == True:
+            port = 443
         if ':' in host:
             host, port = host.split(':')
             port = int(port)
 
+        log.msg("self: %s" % (self))
+        log.msg("host:port: %s:%s" % (host, port))
         self.setHost(host, port)
 
         self.content.seek(0, 0)
         postData = self.content.read()
-        factory = ProxyClientFactory(self.method, self.uri, postData,
-                                     self.requestHeaders.getAllRawHeaders(),
-                                     self)
-        self.reactor.connectTCP(host, port, factory)
+        endpoint = TCP4ClientEndpoint(self.reactor, os.environ.get("PROXY_HOST"), int(os.environ.get("PROXY_PORT")))
+        agent = ProxyAgent(endpoint)
+        scheme = b"http"
+        if self.isSecure() == True:
+            scheme = b"https"
+        userpw = None
+        url = scheme + b"://" + str.encode(host)  + b":" + str.encode(str(port)) + self.uri
+        if self.getUser() != None and self.getPassword() != None:
+            userpw = self.getUser() + b":" + self.getPassword()
+            url = scheme + b"://" + userpw + b"@" + str.encode(host)  + b":" + str.encode(str(port)) + self.uri
+        log.msg("URL: %s" % (url))
+        d = Deferred()
+        log.msg("Method: %s" % (self.method))
+        if self.method == b"POST" or self.method == b"PUT":
+            log.msg("POST Data: %s" % (postData))
+            body = BytesProducer(postData)
+            d = agent.request(self.method, url, self.requestHeaders, body)
+        else:
+            d = agent.request(self.method, url, self.requestHeaders)
+        d.addCallback(self.forwardToClient)
 
     def processResponse(self, data):
         return data
+
+    def forwardToClient(self, response):
+        print("Received response")
+        print('Response version:', response.version)
+        print('Response code:', response.code)
+        print('Response phrase:', response.phrase)
+        print('Response headers:')
+        print(pformat(list(response.headers.getAllRawHeaders())))
+
+        self.setResponseCode(response.code)
+        self.responseHeaders = response.headers
+
+        finished = Deferred()
+        finished = readBody(response)
+        finished.addCallback(self.forwardBodyToClient)
+        return finished
+
+    def forwardBodyToClient(self, body):
+        print('Reponse body:')
+        print(len(body))
+        self.write(body)
+        self.finish()
 
 class TransparentProxy(http.HTTPChannel):
     requestFactory = ProxyRequest
@@ -146,5 +136,13 @@ class TransparentProxy(http.HTTPChannel):
 class ProxyFactory(http.HTTPFactory):
     protocol = TransparentProxy
  
-reactor.listenTCP(8080, ProxyFactory())
-reactor.run()
+if __name__ == "__main__":
+    env = ["HTTP_PORT", "HTTPS_PORT", "SSLKEY_FILE", "SSLCERT_FILE", "PROXY_HOST", "PROXY_PORT"]
+    for e in env:
+        if os.environ.get(e) == None:
+            log.err("Variable %s not set" % (e))
+            sys.exit(-1)
+    reactor.listenTCP(int(os.environ.get("HTTP_PORT")), ProxyFactory())
+    # https://github.com/philmayers/txsslmitm/blob/master/mitm.py
+    reactor.listenSSL(int(os.environ.get("HTTPS_PORT")), ProxyFactory(), ssl.DefaultOpenSSLContextFactory(os.environ.get("SSLKEY_FILE"), os.environ.get("SSLCERT_FILE")))
+    reactor.run()
