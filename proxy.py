@@ -64,13 +64,9 @@ log.startLogging(sys.stdout)
 
 @defer.inlineCallbacks
 def certMaker(cert):
-    print(cert)
-    if cert['subject'][-1][0][0]!='commonName':
-        raise Exception('tip of subject is not commonName')
-
-    hostname = cert['subject'][-1][0][1]
-    OU = cert['issuer'][1][0][1]
-    O = cert['issuer'][2][0][1]
+    hostname = cert['subject']
+    OU = cert['issuer']
+    O = cert['issuer']
     chash = cert['hash']
 
     keyfile =  '%s/%s-key.pem' % (os.environ.get("SSLCACHE_DIR"), chash,)
@@ -153,40 +149,11 @@ def certMaker(cert):
 # we use the normal python socket/ssl API via a
 # deferToThread
 def _ssl_cert_chain(host, port):
-
-    # FIXME: use getaddrinfo, not IPv6-safe here
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-
-    # FIXME: configurable timeout?
-    s.settimeout(5)
-    s.connect((host, port))
-
-    sec = pyssl.wrap_socket(
-            s,
-            # NOTE: it seems that, unless we do verification,
-            # python doesn't expose the peer cert to us.
-            # This means we need to supply a CA bundle, so
-            # this code doesn't support self-signed certs.
-            #
-            # It might be possible to do better with an explicit
-            # context & verify callback?
-            cert_reqs=pyssl.CERT_REQUIRED,
-            ca_certs='/etc/ssl/certs/ca-certificates.crt',
-            )
-    # should be redundant, in theory...
-    sec.do_handshake()
-
-    # get peer certs
-    rv = sec.getpeercert()
-    log.msg("RV: %s" % (rv))
-    bin = sec.getpeercert(binary_form=True)
-    log.msg("bin: %s" % (bin))
-    rv['hash'] = hashlib.sha1(bin).hexdigest()
-    log.msg("hash: %s" % (rv['hash']))
-
-    sec.close()
-    del sec
-    del s
+    rv = {
+      'subject': host.decode("utf-8"),
+      'issuer': 'peterfromthehill',
+      'hash': hashlib.sha1(host).hexdigest()
+    }
     return rv
 
 def ssl_cert_chain(host, port):
@@ -372,11 +339,6 @@ class SSLFactory(ContextFactory):
         d.addCallback(self._gotcert, connection, 443)
         d.addErrback(self._goterr, connection.get_servername(), 443)
         
-        # new_context = Context(self.convert_version2method(connection.get_protocol_version_name()))
-        # new_context.use_privatekey_file(self.certinfo['key'])
-        # new_context.use_certificate_file(self.certinfo['cert'])
-        # connection.set_context(new_context)
-
     def _goterr(self, fail, orighost, origport):
         log.msg('failed to get SSL cert for', orighost, origport, fail)
         log.err(fail)
@@ -391,14 +353,10 @@ class SSLFactory(ContextFactory):
         new_context.use_privatekey_file(self.certinfo['key'])
         new_context.use_certificate_file(self.certinfo['cert'])
         origconnection.set_context(new_context)        
-#        f = ForwardFactory()
-#        f.other = self
-#         
+
     def getContext(self):
-#        log.msg(self.connection.get_protocol_version_name())
         server_context = Context(SSL.TLSv1_2_METHOD)
         server_context.set_tlsext_servername_callback(self)
-        #server_context.sni_callback=self.server_name
         return server_context
 
 def printCache():
@@ -412,10 +370,7 @@ if __name__ == "__main__":
             sys.exit(-1)
     cache = CertCache()
     reactor.listenTCP(int(os.environ.get("HTTP_PORT")), ProxyFactory())
-    # https://github.com/philmayers/txsslmitm/blob/master/mitm.py
-    #reactor.listenSSL(int(os.environ.get("HTTPS_PORT")), ProxyFactory(), ssl.DefaultOpenSSLContextFactory(os.environ.get("SSLKEY_FILE"), os.environ.get("SSLCERT_FILE")))
-    # factory = MitmFactory()
     reactor.listenSSL(int(os.environ.get("HTTPS_PORT")), ProxyFactory(), SSLFactory())
     l = task.LoopingCall(printCache)
-    l.start(10.0) # call every second
+    l.start(10.0)
     reactor.run()
