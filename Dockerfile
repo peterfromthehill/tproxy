@@ -1,10 +1,8 @@
-FROM python:3 AS builder
-COPY requirements.txt .
-RUN pip install --user -r requirements.txt
-
-FROM python:3-slim
-WORKDIR /usr/src/app
-COPY --from=builder /root/.local /root/.local
+FROM golang:1.15 AS builder
+WORKDIR /go/src/tproxy
 COPY . .
-ENV PATH=/root/local/:$PATH
-CMD [ "python", "./proxy.py" ]
+RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go install -v .
+
+FROM scratch
+COPY --from=builder /go/bin/tproxy /bin/tproxy
+CMD ["/bin/tproxy"]
