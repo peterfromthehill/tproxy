@@ -18,6 +18,7 @@ import (
     "io/ioutil"
     "os"
     "errors"
+    "fmt"
 )
 
 var caCer *x509.Certificate
@@ -33,13 +34,13 @@ type SSLEntry struct {
 var SSLCache map[string]SSLEntry
 
 func handleHTTP(w http.ResponseWriter, req *http.Request, scheme string) {
-    log.Println(req)
-    log.Println(req.URL)
     var requestHeader = http.Header{}
     copyHeader(requestHeader, req.Header)
 
     req.URL.Scheme = scheme
     req.URL.Host = req.Host
+
+    log.Printf("%s => %s %s", req.RemoteAddr, req.Method, req.URL)
 
     resp, err := http.DefaultTransport.RoundTrip(req)
     if err != nil {
@@ -47,13 +48,13 @@ func handleHTTP(w http.ResponseWriter, req *http.Request, scheme string) {
         return
     }
     defer resp.Body.Close()
+    log.Printf("%s <= %s %d", req.RemoteAddr, resp.Status, resp.ContentLength)
     copyHeader(w.Header(), resp.Header)
     w.WriteHeader(resp.StatusCode)
     io.Copy(w, resp.Body)
 }        
 
 func copyHeader(dst, src http.Header) {
-    log.Println("======================")
     for k, vv := range src {
         if strings.ToLower(k) == "connection" {
             dst.Add(k, "close")
@@ -61,12 +62,10 @@ func copyHeader(dst, src http.Header) {
             continue
         } else {
             for _, v := range vv {
-                log.Println(k, v)
                 dst.Add(k, v)
             }
         }
     }
-    log.Println("======================")
 }
 
 func main() {
@@ -91,6 +90,9 @@ func startWebserver(httpPort, httpsPort string) {
     config := &tls.Config{
         GetCertificate: returnCert,
     }
+
+    finish := make(chan bool)
+
     ln, err := tls.Listen("tcp", ":" + httpsPort, config)
     if err != nil {
         log.Println(err)
@@ -105,14 +107,19 @@ func startWebserver(httpPort, httpsPort string) {
     }
 
     go func () {
-        http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+        err := http.Serve(ln, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                     handleHTTP(w, r, "https")
             }))
-        panic("Something goes wrong with the https port")
+        fmt.Errorf("HTTPS: %s", err)
     }()
-    http.Serve(lm, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+    go func () {
+        err := http.Serve(lm, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
                 handleHTTP(w, r, "http")
         }))
+        fmt.Errorf("HTTP: %s", err)
+    }()
+    
+    <-finish
 }
 
 func sslCacheWatcher(interval time.Duration) {
@@ -126,11 +133,11 @@ func sslCacheWatcher0() {
     for i, v := range SSLCache {
         cer, err := parseX509Cert(v.certPEM.Bytes())
         if err != nil {
-            log.Println("invalid cert!")
+            log.Printf("%s: invalid cert!", i)
             continue
         }
         if cer.NotAfter.Before(time.Now().Add(time.Minute * 5)) {
-            log.Println("Delete entry for host",i)
+            log.Printf("%s: cert expired, delete it from cache", i)
             delete(SSLCache, i)
             continue
         }
@@ -141,18 +148,21 @@ func sslCacheWatcher0() {
 func loadPKfromFile(file string) (*rsa.PrivateKey, error) {
     priv, err := ioutil.ReadFile(file)
     if err != nil {
-        log.Println("No RSA private key found, generating temp one", nil)
+        return nil, err
     }
 
     key, err := parsePrivateKey(priv)
-    return key, err
+    if err != nil {
+        return nil, fmt.Errorf("%s: %s", file, err)
+    }    
+    return key, nil
 }
 
 func parsePrivateKey(privKey []byte) (*rsa.PrivateKey, error) {
     privPem, _ := pem.Decode(privKey)
     var privPemBytes []byte
     if privPem.Type != "RSA PRIVATE KEY" {
-        log.Println("RSA private key is of the wrong type")
+        return nil, errors.New("RSA private key is of the wrong type")
     }
 
     privPemBytes = privPem.Bytes
@@ -166,31 +176,37 @@ func loadX509fromFile(file string) (*x509.Certificate, error) {
         return nil, err
     }
     cer, err := parseX509Cert(cert)
-    return cer, err
+    if err != nil {
+        return nil, fmt.Errorf("%s: %s", file, err)
+    }       
+    return cer, nil
 }
 
 func parseX509Cert(cert []byte) (*x509.Certificate, error) {
     certPool := x509.NewCertPool()
     ok := certPool.AppendCertsFromPEM(cert)
     if !ok {
-        panic("failed to parse root certificate")
+        return nil, fmt.Errorf("failed to parse root certificate")
     }    
     block, _ := pem.Decode([]byte(cert))
     if block == nil {
-        panic("failed to parse certificate PEM")
+        return nil, fmt.Errorf("failed to parse certificate PEM")
     }    
     cer, err := x509.ParseCertificate(block.Bytes)
     return cer, err
 }
 
 func bootstrap(tlsCertPath, privateKeyPath string) (*x509.Certificate, *rsa.PrivateKey, error) {    
-    SSLCache = make(map[string]SSLEntry)
-    go sslCacheWatcher(10)    
     cer, err := loadX509fromFile(tlsCertPath)
     if err != nil {
         return nil, nil, err
     }
     key, err := loadPKfromFile(privateKeyPath)
+    if err != nil {
+        return nil, nil, err
+    }
+    SSLCache = make(map[string]SSLEntry)
+    go sslCacheWatcher(10)    
     return cer, key, nil
 }
 
@@ -202,7 +218,7 @@ func findCertinCache(serverName string) (*tls.Certificate, error) {
         }
         return &serverCert, nil
     }
-    return nil, errors.New("Cert not found in cache")
+    return nil, fmt.Errorf("%s Cert not found in cache", serverName)
 }
 
 func createCertificateTemplate(serverName string, minutes time.Duration) (*x509.Certificate) {
@@ -235,12 +251,12 @@ func returnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
 
     certPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
     }
 
     certBytes, err := x509.CreateCertificate(rand.Reader, cert, caCer, &certPrivKey.PublicKey, caKey)
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
     }
 
     certPEM := new(bytes.Buffer)
@@ -260,7 +276,7 @@ func returnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
 
     serverCert, err := tls.X509KeyPair(certPEM.Bytes(), certPrivKeyPEM.Bytes())
     if err != nil {
-        return nil, err
+        return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
     }
 
     return &serverCert, nil
