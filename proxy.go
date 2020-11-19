@@ -118,7 +118,7 @@ func startWebserver(httpPort, httpsPort string) {
         }))
         fmt.Errorf("HTTP: %s", err)
     }()
-    
+    log.Printf("Webserver startd in Ports %s & %s", httpPort, httpsPort)
     <-finish
 }
 
