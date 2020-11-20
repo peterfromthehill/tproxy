@@ -3,6 +3,7 @@ WORKDIR /go/src/tproxy
 COPY . .
 RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go install -v .
 
-FROM scratch
+FROM alpine
 COPY --from=builder /go/bin/tproxy /bin/tproxy
+RUN apk update && apk add ca-certificates
 CMD ["/bin/tproxy"]
