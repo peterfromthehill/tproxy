@@ -12,7 +12,7 @@ func main() {
 	e := config.Envs{}
 	e.VerifyEnvs()
 
-	log.SetFlags(log.Lshortfile)
+	log.SetFlags(log.Lshortfile | log.LstdFlags)
 	certService := services.CertService{os.Getenv(config.SSLCERT_FILE), os.Getenv(config.SSLKEY_FILE)}
 	certService.Bootstrap()
 

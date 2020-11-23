@@ -86,7 +86,7 @@ func ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
 		return serverCert, nil
 	}
 	// set up our server certificate
-	cert := createCertificateTemplate(helloInfo.ServerName, 10)
+	cert := createCertificateTemplate(helloInfo.ServerName, 60*24)
 
 	certPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {

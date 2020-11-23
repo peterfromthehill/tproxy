@@ -37,7 +37,7 @@ func (this Webserver) StartWebserver() {
 
 	this.serve(httpsListener, "https")
 	this.serve(httpListener, "http")
-
+	log.Printf("Webserver startd in Ports %s & %s", this.HttpPort, this.HttpsPort)
 	<-finish
 }
 
