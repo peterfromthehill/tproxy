@@ -2,6 +2,7 @@ package services
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/tls"
@@ -13,6 +14,8 @@ import (
 	"math/big"
 	"net"
 	"time"
+
+	"go.elastic.co/apm"
 )
 
 // SSLCache cached TLS certificates from sites visited in the history
@@ -82,21 +85,30 @@ func createCertificateTemplate(serverName string, minutes time.Duration) *x509.C
 }
 
 func ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
+	tx := apm.DefaultTracer.StartTransaction("ReturnCert("+helloInfo.ServerName+")", "request")
+	defer tx.End()
+	ctx := apm.ContextWithTransaction(context.TODO(), tx)
+	tx.Context.SetLabel("inCache", "false")
 	if serverCert, err := findCertinCache(helloInfo.ServerName); err == nil {
+		tx.Context.SetLabel("inCache", "true")
 		return serverCert, nil
 	}
 	// set up our server certificate
 	cert := createCertificateTemplate(helloInfo.ServerName, 60*24)
 
+	keyGenSpan, ctx := apm.StartSpan(ctx, "GenerateKey("+helloInfo.ServerName+")", "request")
 	certPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
 	}
+	keyGenSpan.End()
 
+	createCertSpan, ctx := apm.StartSpan(ctx, "CreateCertificate("+helloInfo.ServerName+")", "request")
 	certBytes, err := x509.CreateCertificate(rand.Reader, cert, caCer, &certPrivKey.PublicKey, caKey)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
 	}
+	createCertSpan.End()
 
 	certPEM := new(bytes.Buffer)
 	pem.Encode(certPEM, &pem.Block{

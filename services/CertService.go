@@ -3,7 +3,6 @@ package services
 import (
 	"crypto/rsa"
 	"crypto/x509"
-	"log"
 )
 
 var caCer *x509.Certificate
@@ -18,8 +17,7 @@ func (this CertService) Bootstrap() {
 	var err error
 	caCer, caKey, err = bootstrap(this.SslCertFile, this.SslKeyFile)
 	if err != nil {
-		log.Println(err)
-		return
+		panic(err)
 	}
 }
 

@@ -3,10 +3,13 @@ package webserver
 import (
 	"crypto/tls"
 	"fmt"
-	"github.com/peterfromthehill/tproxy/services"
 	"log"
 	"net"
 	"net/http"
+
+	"github.com/peterfromthehill/tproxy/services"
+	"go.elastic.co/apm"
+	"go.elastic.co/apm/module/apmhttp"
 )
 
 type Webserver struct {
@@ -43,10 +46,13 @@ func (this Webserver) StartWebserver() {
 
 func (this Webserver) serve(listener net.Listener, scheme string) {
 	go func() {
-		err := http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		err := http.Serve(listener, apmhttp.Wrap(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			span, ctx := apm.StartSpan(r.Context(), "HandlerFunc", "request")
+			defer span.End()
+
 			requestHandler := services.RequestHandler{w, r, scheme}
-			requestHandler.HandleHTTP()
-		}))
+			requestHandler.HandleHTTP(ctx)
+		})))
 		fmt.Errorf(scheme+": %s", err)
 	}()
 }

@@ -1,11 +1,12 @@
 package main
 
 import (
-	"github.com/peterfromthehill/tproxy/services"
+	"net/http"
+	"reflect"
 	"testing"
+
+	"github.com/peterfromthehill/tproxy/services"
 )
-import "net/http"
-import "reflect"
 
 func TestCopyHeader(t *testing.T) {
 	var src = http.Header{}
@@ -21,6 +22,6 @@ func TestCopyHeader(t *testing.T) {
 	services.CopyHeader(dst, src)
 
 	if !reflect.DeepEqual(dst, assertdst) {
-		t.Errorf("dst not equal asserdst: %s <=> %s", dst, assertdst)
+		t.Errorf("dst not equal assertdst: %s <=> %s", dst, assertdst)
 	}
 }
