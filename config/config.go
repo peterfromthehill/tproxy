@@ -39,19 +39,6 @@ func ParseArgs() (*Configuration, error) {
 			configError := fmt.Errorf("sslCert not found: %s", config.SSLCert)
 			_ = configError
 		}
-		// if _, err := strconv.Atoi(Config.HTTPPort); err != nil {
-		// 	configError := fmt.Errorf("%q looks not like a number", Config.HTTPPort)
-		// 	_ = configError
-		// }
-		// if _, err := strconv.Atoi(Config.HTTPSPort); err != nil {
-		// 	configError := fmt.Errorf("%q looks not like a number", Config.HTTPSPort)
-		// 	_ = configError
-		// }
-		// if _, err := strconv.Atoi(Config.APIPort); err != nil {
-		// 	configError := fmt.Errorf("%q looks not like a number", Config.APIPort)
-		// 	_ = configError
-		// }
-
 	})
 	if configError != nil {
 		return nil, configError

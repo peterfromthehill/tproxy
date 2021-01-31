@@ -9,9 +9,6 @@ import (
 )
 
 func main() {
-	//e := config.Envs{}
-	//e.VerifyEnvs()
-
 	xconfig, err := config.ParseArgs()
 	if err != nil {
 		log.Fatal(err)
