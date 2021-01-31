@@ -16,14 +16,14 @@ func (this CertLoader) loadX509fromFile() (*x509.Certificate, error) {
 	if err != nil {
 		return nil, err
 	}
-	cer, err := parseX509Cert(cert)
+	cer, err := ParseX509Cert(cert)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %s", this.file, err)
 	}
 	return cer, nil
 }
 
-func parseX509Cert(cert []byte) (*x509.Certificate, error) {
+func ParseX509Cert(cert []byte) (*x509.Certificate, error) {
 	certPool := x509.NewCertPool()
 	ok := certPool.AppendCertsFromPEM(cert)
 	if !ok {

@@ -1,21 +1,30 @@
 package main
 
 import (
+	"log"
+
 	"github.com/peterfromthehill/tproxy/config"
 	"github.com/peterfromthehill/tproxy/services"
 	"github.com/peterfromthehill/tproxy/webserver"
-	"log"
-	"os"
 )
 
 func main() {
-	e := config.Envs{}
-	e.VerifyEnvs()
+	//e := config.Envs{}
+	//e.VerifyEnvs()
+
+	xconfig, err := config.ParseArgs()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	certService := services.CertService{os.Getenv(config.SSLCERT_FILE), os.Getenv(config.SSLKEY_FILE)}
+
+	certService := services.CertService{xconfig.SSLCert, xconfig.SSLKey}
 	certService.Bootstrap()
 
-	server := webserver.Webserver{os.Getenv(config.HTTP_PORT), os.Getenv(config.HTTPS_PORT)}
+	api := webserver.API{xconfig.APIPort}
+	go api.StartAPIServer()
+
+	server := webserver.Webserver{xconfig.HTTPPort, xconfig.HTTPSPort, xconfig.SSLCert, xconfig.SSLKey}
 	server.StartWebserver()
 }
