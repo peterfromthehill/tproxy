@@ -15,13 +15,28 @@ func main() {
 	}
 
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
+	cacheService := services.Init()
+	cacheService.Watch()
 
-	certService := services.CertService{xconfig.SSLCert, xconfig.SSLKey}
+	certService := &services.CertService{
+		SslCertFile:  xconfig.SSLCert,
+		SslKeyFile:   xconfig.SSLKey,
+		CacheService: cacheService,
+	}
 	certService.Bootstrap()
 
-	api := webserver.API{xconfig.APIPort}
+	api := &webserver.API{
+		Port:        xconfig.APIPort,
+		CertService: *certService,
+	}
 	go api.StartAPIServer()
 
-	server := webserver.Webserver{xconfig.HTTPPort, xconfig.HTTPSPort, xconfig.SSLCert, xconfig.SSLKey}
+	server := &webserver.Webserver{
+		HttpPort:    xconfig.HTTPPort,
+		HttpsPort:   xconfig.HTTPSPort,
+		SSLCert:     xconfig.SSLCert,
+		SSLKey:      xconfig.SSLKey,
+		CertService: certService,
+	}
 	server.StartWebserver()
 }

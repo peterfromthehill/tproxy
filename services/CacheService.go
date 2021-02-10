@@ -2,29 +2,20 @@ package services
 
 import (
 	"crypto/tls"
+	"crypto/x509"
 	"fmt"
 	"log"
-	"sync"
 	"time"
 )
 
-// SSLCache cached TLS certificates from sites visited in the history
-
 type CacheService struct {
-	sslCache map[string]SSLEntry
+	sslCache map[string]*tls.Certificate
 }
 
-var cacheSericeInstance *CacheService
-var onlyOneCacheService sync.Once
-
-func GetCacheService() *CacheService {
-	onlyOneCacheService.Do(func() {
-		cacheSericeInstance = &CacheService{
-			sslCache: make(map[string]SSLEntry),
-		}
-		_ = cacheSericeInstance
-	})
-	return cacheSericeInstance
+func Init() *CacheService {
+	return &CacheService{
+		sslCache: make(map[string]*tls.Certificate),
+	}
 }
 
 func (this *CacheService) Watch() {
@@ -38,31 +29,35 @@ func (this *CacheService) sslCacheWatcher(interval time.Duration) {
 	}
 }
 
-func (this *CacheService) GetCopyOfCache() map[string]SSLEntry {
-	newMap := make(map[string]SSLEntry)
+func (this *CacheService) GetCopyOfCache() map[string]tls.Certificate {
+	newMap := make(map[string]tls.Certificate)
 	for k, v := range this.sslCache {
-		newMap[k] = v
+		newMap[k] = *v
 	}
 	return newMap
 }
 
 func (this *CacheService) sslCacheWatcher0() {
 	for i, v := range this.sslCache {
-		cer, err := ParseX509Cert(v.certPEM.Bytes())
+		if len(v.Certificate) < 1 {
+			log.Printf("%s has no certificates", i)
+			continue
+		}
+		cer, err := x509.ParseCertificate(v.Certificate[0])
 		if err != nil {
 			log.Printf("%s: invalid cert!", i)
 			continue
 		}
+		log.Printf("%s: %s", i, cer.NotAfter)
 		if cer.NotAfter.Before(time.Now().Add(time.Minute * 5)) {
 			log.Printf("%s: cert expired, delete it from cache", i)
 			this.Delete(i)
 			continue
 		}
-		log.Printf("%s %s\n", i, cer.NotAfter)
 	}
 }
 
-func (this *CacheService) Add(serverName string, entry SSLEntry) {
+func (this *CacheService) Add(serverName string, entry *tls.Certificate) {
 	this.sslCache[serverName] = entry
 }
 
@@ -75,18 +70,14 @@ func (this *CacheService) HasServerName(serverName string) bool {
 	return ok
 }
 
-func (this *CacheService) GetEntry(serverName string) (SSLEntry, bool) {
+func (this *CacheService) GetEntry(serverName string) (*tls.Certificate, bool) {
 	sslEntry, ok := this.sslCache[serverName]
 	return sslEntry, ok
 }
 
 func (this *CacheService) FindCertinCache(serverName string) (*tls.Certificate, error) {
 	if sslEntry, ok := this.GetEntry(serverName); ok != false {
-		serverCert, err := tls.X509KeyPair(sslEntry.certPEM.Bytes(), sslEntry.certPrivKeyPEM.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		return &serverCert, nil
+		return sslEntry, nil
 	}
 	return nil, fmt.Errorf("%s Cert not found in cache", serverName)
 }

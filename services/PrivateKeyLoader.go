@@ -18,19 +18,19 @@ func (privateKeyLoader PrivateKeyLoader) loadPKfromFile() (*rsa.PrivateKey, erro
 		return nil, err
 	}
 
-	key, err := parsePrivateKey(priv)
+	key, err := privateKeyLoader.parsePrivateKey(priv)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %s", privateKeyLoader.file, err)
 	}
 	return key, nil
 }
 
-func parsePrivateKey(privKey []byte) (*rsa.PrivateKey, error) {
+func (privateKeyLoader PrivateKeyLoader) parsePrivateKey(privKey []byte) (*rsa.PrivateKey, error) {
 	privPem, _ := pem.Decode(privKey)
 	privatePkcs1Key, errPkcs1 := x509.ParsePKCS1PrivateKey(privPem.Bytes)
 	if errPkcs1 == nil {
 		return privatePkcs1Key, nil
-	}	
+	}
 	privatePkcs8Key, errPkcs8 := x509.ParsePKCS8PrivateKey(privPem.Bytes)
 	if errPkcs8 == nil {
 		privatePkcs8RsaKey, ok := privatePkcs8Key.(*rsa.PrivateKey)
@@ -38,6 +38,6 @@ func parsePrivateKey(privKey []byte) (*rsa.PrivateKey, error) {
 			return nil, fmt.Errorf("Pkcs8 contained non-RSA key. Expected RSA key")
 		}
 		return privatePkcs8RsaKey, nil
-	}	
+	}
 	return nil, fmt.Errorf("Failed to parse private key as Pkcs#1 or Pkcs#8\n\n%s\n\n%s", errPkcs1, errPkcs8)
 }

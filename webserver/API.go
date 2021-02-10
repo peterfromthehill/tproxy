@@ -13,26 +13,26 @@ import (
 )
 
 type API struct {
-	Port int
+	Port        int
+	CertService services.CertService
 }
 
 func (api API) StartAPIServer() {
 	log.Printf("API served on port %d", api.Port)
 	r := mux.NewRouter()
-	r.HandleFunc("/cache/", getHandler()).Methods("GET")
-	r.HandleFunc("/cache/{domain}", getDomainHandler()).Methods("GET")
-	r.HandleFunc("/cache/{domain}", deleteDomainHandler()).Methods("DELETE")
-	r.HandleFunc("/cache/{domain}", addDomainHandler()).Methods("PUT")
-	r.HandleFunc("/cache/{domain}", addDomainHandler()).Methods("POST")
+	r.HandleFunc("/cache/", api.getHandler()).Methods("GET")
+	r.HandleFunc("/cache/{domain}", api.getDomainHandler()).Methods("GET")
+	r.HandleFunc("/cache/{domain}", api.deleteDomainHandler()).Methods("DELETE")
+	r.HandleFunc("/cache/{domain}", api.addDomainHandler()).Methods("PUT")
+	r.HandleFunc("/cache/{domain}", api.addDomainHandler()).Methods("POST")
 	r.Path("/metrics").Handler(promhttp.Handler())
 	log.Fatal(http.ListenAndServe(":"+fmt.Sprintf("%d", api.Port), r))
 }
 
-func getHandler() func(w http.ResponseWriter, r *http.Request) {
+func (api API) getHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		var domains []string
-		cacheService := services.GetCacheService()
-		for i := range cacheService.GetCopyOfCache() {
+		for i := range api.CertService.CacheService.GetCopyOfCache() {
 			domains = append(domains, i)
 		}
 		w.WriteHeader(http.StatusOK)
@@ -40,12 +40,11 @@ func getHandler() func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func getDomainHandler() func(w http.ResponseWriter, r *http.Request) {
+func (api API) getDomainHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		domain := mux.Vars(r)["domain"]
 		fmt.Printf("get /cache/%s", domain)
-		cacheService := services.GetCacheService()
-		dom, err := cacheService.FindCertinCache(domain)
+		dom, err := api.CertService.CacheService.FindCertinCache(domain)
 		if err != nil {
 			w.WriteHeader(http.StatusNotFound)
 			return
@@ -56,19 +55,18 @@ func getDomainHandler() func(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func deleteDomainHandler() func(w http.ResponseWriter, r *http.Request) {
+func (api API) deleteDomainHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		domain := mux.Vars(r)["domain"]
-		cacheService := services.GetCacheService()
-		cacheService.Delete(domain)
+		api.CertService.CacheService.Delete(domain)
 		w.WriteHeader(http.StatusOK)
 	}
 }
 
-func addDomainHandler() func(w http.ResponseWriter, r *http.Request) {
+func (api API) addDomainHandler() func(w http.ResponseWriter, r *http.Request) {
 	return func(w http.ResponseWriter, r *http.Request) {
 		domain := mux.Vars(r)["domain"]
-		_, err := services.GenerateCertByName(domain)
+		_, err := api.CertService.GenerateCertByName(domain)
 		if err != nil {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}

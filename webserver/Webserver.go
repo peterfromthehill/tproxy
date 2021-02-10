@@ -18,8 +18,11 @@ import (
 )
 
 type Webserver struct {
-	HttpPort, HttpsPort int
-	SSLCert, SSLKey     string
+	HttpPort    int
+	HttpsPort   int
+	SSLCert     string
+	SSLKey      string
+	CertService *services.CertService
 }
 
 type contextKey struct {
@@ -37,7 +40,7 @@ func getConn(r *http.Request) net.Conn {
 
 // getConnFromTLSConn returns the internal wrapped connection from the tls.Conn.
 func getConnFromTLSConn(tlsConn *tls.Conn) net.Conn {
-	// XXX: This is really BAD!!! Only way currently to get the underlying
+	// FIXME: Only way currently to get the underlying
 	// connection of the tls.Conn. At least until
 	// https://github.com/golang/go/issues/29257 is solved.
 	conn := reflect.ValueOf(tlsConn).Elem().FieldByName("conn")
@@ -64,7 +67,7 @@ func (this Webserver) StartWebserver() {
 	const NETWORK = "tcp"
 
 	config := &tls.Config{
-		GetCertificate: services.ReturnCert,
+		GetCertificate: this.CertService.ReturnCert,
 	}
 
 	finish := make(chan bool)
