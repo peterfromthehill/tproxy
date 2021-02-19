@@ -1,10 +1,13 @@
 package services
 
 import (
+	"context"
 	"io"
 	"log"
 	"net/http"
 	"strings"
+
+	"go.elastic.co/apm/module/apmhttp"
 )
 
 type RequestHandler struct {
@@ -13,16 +16,12 @@ type RequestHandler struct {
 	Scheme string
 }
 
-func (this RequestHandler) HandleHTTP() {
-	var requestHeader = http.Header{}
-	CopyHeader(requestHeader, this.Req.Header)
-
+func (this RequestHandler) HandleHTTP(ctx context.Context) {
 	this.Req.URL.Scheme = this.Scheme
 	this.Req.URL.Host = this.Req.Host
-
 	log.Printf("%s => %s %s", this.Req.RemoteAddr, this.Req.Method, this.Req.URL)
-
-	resp, err := http.DefaultTransport.RoundTrip(this.Req)
+	roundTripper := apmhttp.WrapRoundTripper(http.DefaultTransport)
+	resp, err := roundTripper.RoundTrip(this.Req)
 	if err != nil {
 		http.Error(this.Writer, err.Error(), http.StatusServiceUnavailable)
 		return

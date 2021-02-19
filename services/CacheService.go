@@ -1,122 +1,83 @@
 package services
 
 import (
-	"bytes"
-	"crypto/rand"
-	"crypto/rsa"
 	"crypto/tls"
 	"crypto/x509"
-	"crypto/x509/pkix"
-	"encoding/pem"
 	"fmt"
 	"log"
-	"math/big"
-	"net"
 	"time"
 )
 
-// SSLCache cached TLS certificates from sites visited in the history
-var SSLCache map[string]SSLEntry
-
 type CacheService struct {
+	sslCache map[string]*tls.Certificate
 }
 
-func (this CacheService) makeAndWatch() {
-	SSLCache = make(map[string]SSLEntry)
-	go sslCacheWatcher(10)
+func Init() *CacheService {
+	return &CacheService{
+		sslCache: make(map[string]*tls.Certificate),
+	}
 }
 
-func sslCacheWatcher(interval time.Duration) {
+func (this *CacheService) Watch() {
+	go this.sslCacheWatcher(10)
+}
+
+func (this *CacheService) sslCacheWatcher(interval time.Duration) {
 	for {
-		sslCacheWatcher0()
+		this.sslCacheWatcher0()
 		time.Sleep(interval * time.Second)
 	}
 }
 
-func sslCacheWatcher0() {
-	for i, v := range SSLCache {
-		cer, err := parseX509Cert(v.certPEM.Bytes())
+func (this *CacheService) GetCopyOfCache() map[string]tls.Certificate {
+	newMap := make(map[string]tls.Certificate)
+	for k, v := range this.sslCache {
+		newMap[k] = *v
+	}
+	return newMap
+}
+
+func (this *CacheService) sslCacheWatcher0() {
+	for i, v := range this.sslCache {
+		if len(v.Certificate) < 1 {
+			log.Printf("%s has no certificates", i)
+			continue
+		}
+		cer, err := x509.ParseCertificate(v.Certificate[0])
 		if err != nil {
 			log.Printf("%s: invalid cert!", i)
 			continue
 		}
+		log.Printf("%s: %s", i, cer.NotAfter)
 		if cer.NotAfter.Before(time.Now().Add(time.Minute * 5)) {
 			log.Printf("%s: cert expired, delete it from cache", i)
-			delete(SSLCache, i)
+			this.Delete(i)
 			continue
 		}
-		log.Printf("%s %s\n", i, cer.NotAfter)
 	}
 }
 
-func findCertinCache(serverName string) (*tls.Certificate, error) {
-	if sslEntry, ok := SSLCache[serverName]; ok != false {
-		serverCert, err := tls.X509KeyPair(sslEntry.certPEM.Bytes(), sslEntry.certPrivKeyPEM.Bytes())
-		if err != nil {
-			return nil, err
-		}
-		return &serverCert, nil
+func (this *CacheService) Add(serverName string, entry *tls.Certificate) {
+	this.sslCache[serverName] = entry
+}
+
+func (this *CacheService) Delete(serverName string) {
+	delete(this.sslCache, serverName)
+}
+
+func (this *CacheService) HasServerName(serverName string) bool {
+	_, ok := this.sslCache[serverName]
+	return ok
+}
+
+func (this *CacheService) GetEntry(serverName string) (*tls.Certificate, bool) {
+	sslEntry, ok := this.sslCache[serverName]
+	return sslEntry, ok
+}
+
+func (this *CacheService) FindCertinCache(serverName string) (*tls.Certificate, error) {
+	if sslEntry, ok := this.GetEntry(serverName); ok != false {
+		return sslEntry, nil
 	}
 	return nil, fmt.Errorf("%s Cert not found in cache", serverName)
-}
-
-func createCertificateTemplate(serverName string, minutes time.Duration) *x509.Certificate {
-	cert := &x509.Certificate{
-		SerialNumber: big.NewInt(2019),
-		Subject: pkix.Name{
-			CommonName: serverName,
-		},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Minute * minutes),
-		SubjectKeyId: []byte{1, 2, 3, 4, 6},
-		ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageClientAuth, x509.ExtKeyUsageServerAuth},
-		KeyUsage:     x509.KeyUsageDigitalSignature,
-	}
-
-	if ip := net.ParseIP(serverName); ip != nil {
-		cert.IPAddresses = append(cert.IPAddresses, ip)
-	} else {
-		cert.DNSNames = append(cert.DNSNames, serverName)
-	}
-	return cert
-}
-
-func ReturnCert(helloInfo *tls.ClientHelloInfo) (*tls.Certificate, error) {
-	if serverCert, err := findCertinCache(helloInfo.ServerName); err == nil {
-		return serverCert, nil
-	}
-	// set up our server certificate
-	cert := createCertificateTemplate(helloInfo.ServerName, 60*24)
-
-	certPrivKey, err := rsa.GenerateKey(rand.Reader, 4096)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
-	}
-
-	certBytes, err := x509.CreateCertificate(rand.Reader, cert, caCer, &certPrivKey.PublicKey, caKey)
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
-	}
-
-	certPEM := new(bytes.Buffer)
-	pem.Encode(certPEM, &pem.Block{
-		Type:  "CERTIFICATE",
-		Bytes: certBytes,
-	})
-
-	certPrivKeyPEM := new(bytes.Buffer)
-	pem.Encode(certPrivKeyPEM, &pem.Block{
-		Type:  "RSA PRIVATE KEY",
-		Bytes: x509.MarshalPKCS1PrivateKey(certPrivKey),
-	})
-
-	sslentry := SSLEntry{*certPrivKeyPEM, *certPEM}
-	SSLCache[helloInfo.ServerName] = sslentry
-
-	serverCert, err := tls.X509KeyPair(certPEM.Bytes(), certPrivKeyPEM.Bytes())
-	if err != nil {
-		return nil, fmt.Errorf("%s: %s", helloInfo.ServerName, err)
-	}
-
-	return &serverCert, nil
 }

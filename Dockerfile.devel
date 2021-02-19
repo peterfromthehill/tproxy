@@ -1,0 +1,7 @@
+FROM golang:1.15
+WORKDIR /go/src/tproxy
+COPY . .
+RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go get -v
+RUN GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go install -v .
+RUN cp /go/bin/tproxy /bin/tproxy
+CMD ["/bin/tproxy"]

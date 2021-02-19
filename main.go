@@ -1,21 +1,42 @@
 package main
 
 import (
+	"log"
+
 	"github.com/peterfromthehill/tproxy/config"
 	"github.com/peterfromthehill/tproxy/services"
 	"github.com/peterfromthehill/tproxy/webserver"
-	"log"
-	"os"
 )
 
 func main() {
-	e := config.Envs{}
-	e.VerifyEnvs()
+	xconfig, err := config.ParseArgs()
+	if err != nil {
+		log.Fatal(err)
+	}
 
 	log.SetFlags(log.Lshortfile | log.LstdFlags)
-	certService := services.CertService{os.Getenv(config.SSLCERT_FILE), os.Getenv(config.SSLKEY_FILE)}
+	cacheService := services.Init()
+	cacheService.Watch()
+
+	certService := &services.CertService{
+		SslCertFile:  xconfig.SSLCert,
+		SslKeyFile:   xconfig.SSLKey,
+		CacheService: cacheService,
+	}
 	certService.Bootstrap()
 
-	server := webserver.Webserver{os.Getenv(config.HTTP_PORT), os.Getenv(config.HTTPS_PORT)}
+	api := &webserver.API{
+		Port:        xconfig.APIPort,
+		CertService: *certService,
+	}
+	go api.StartAPIServer()
+
+	server := &webserver.Webserver{
+		HttpPort:    xconfig.HTTPPort,
+		HttpsPort:   xconfig.HTTPSPort,
+		SSLCert:     xconfig.SSLCert,
+		SSLKey:      xconfig.SSLKey,
+		CertService: certService,
+	}
 	server.StartWebserver()
 }
